@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-custom-fonts",
+  "name": "Custom Fonts",
+  "version": "1.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "Upload font files and render custom fonts in specific parts of your notes using font code blocks.",
+  "author": "",
+  "authorUrl": "",
+  "isDesktopOnly": true
+}
