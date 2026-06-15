@@ -15,17 +15,9 @@ import {
 // ---------------------------------------------------------------------------
 
 interface FontEntry {
-  /** CSS font-family name the user assigns (editable in settings). */
   name: string;
-  /** Filename under the plugin's fonts/ directory. */
   filename: string;
-}
-
-interface FontAlias {
-  /** Code-block language string (e.g. "handwriting", "typewriter"). */
-  id: string;
-  /** Matches a FontEntry.name. */
-  fontName: string;
+  blockName: string;
   size: string;
   weight: string;
   style: string;
@@ -37,12 +29,21 @@ interface FontAlias {
 
 interface CustomFontsSettings {
   fonts: FontEntry[];
-  aliases: FontAlias[];
 }
 
 const DEFAULT_SETTINGS: CustomFontsSettings = {
   fonts: [],
-  aliases: [],
+};
+
+const BLANK_FONT: Omit<FontEntry, "name" | "filename"> = {
+  blockName: "",
+  size: "",
+  weight: "",
+  style: "",
+  color: "",
+  lineHeight: "",
+  align: "",
+  letterSpacing: "",
 };
 
 // ---------------------------------------------------------------------------
@@ -61,10 +62,6 @@ function fontFormat(filename: string): string {
   return FONT_FORMATS[ext] ?? "truetype";
 }
 
-/**
- * Parse the top of a code-block source into key: value config pairs and
- * remaining content. The header ends at the first blank line.
- */
 function parseBlock(source: string): {
   config: Record<string, string>;
   content: string;
@@ -75,15 +72,9 @@ function parseBlock(source: string): {
 
   for (; i < lines.length; i++) {
     const line = lines[i];
-    if (line.trim() === "") {
-      i++; // skip the blank separator
-      break;
-    }
+    if (line.trim() === "") { i++; break; }
     const m = line.match(/^([\w-]+):\s*(.*)$/);
-    if (!m) {
-      // Not a key:value line — treat everything from here as content
-      break;
-    }
+    if (!m) break;
     config[m[1]] = m[2].trim();
   }
 
@@ -110,8 +101,7 @@ function applyStyles(el: HTMLElement, cfg: Record<string, string>) {
 export default class CustomFontsPlugin extends Plugin {
   settings: CustomFontsSettings;
   private styleEl: HTMLStyleElement;
-  /** Tracks which alias IDs have had a processor registered this session. */
-  private registeredAliases = new Set<string>();
+  private registeredBlocks = new Set<string>();
 
   async onload() {
     await this.loadSettings();
@@ -122,17 +112,14 @@ export default class CustomFontsPlugin extends Plugin {
     document.head.appendChild(this.styleEl);
     this.refreshFontFaces();
 
-    // Generic font block: ```font
-    this.registerMarkdownCodeBlockProcessor(
-      "font",
-      async (source, el, ctx) => {
-        await this.renderBlock(source, el, ctx, {});
-      }
-    );
+    // Generic ```font block
+    this.registerMarkdownCodeBlockProcessor("font", async (source, el, ctx) => {
+      await this.renderBlock(source, el, ctx, {});
+    });
 
-    // Register processors for all saved aliases on startup
-    for (const alias of this.settings.aliases) {
-      this.registerAliasProcessor(alias);
+    // Per-font named blocks
+    for (const font of this.settings.fonts) {
+      if (font.blockName) this.registerFontProcessor(font.blockName);
     }
 
     this.addSettingTab(new CustomFontsSettingTab(this.app, this));
@@ -158,19 +145,14 @@ export default class CustomFontsPlugin extends Plugin {
 
   private getFontUrl(filename: string): string {
     const adapter = this.app.vault.adapter as FileSystemAdapter;
-    return adapter.getResourcePath(
-      normalizePath(`${this.fontsDir}/${filename}`)
-    );
+    return adapter.getResourcePath(normalizePath(`${this.fontsDir}/${filename}`));
   }
 
-  /** Rebuild the @font-face stylesheet from current settings. */
   refreshFontFaces() {
     this.styleEl.textContent = this.settings.fonts
       .map(
         (f) =>
-          `@font-face { font-family: "${f.name}"; src: url("${this.getFontUrl(
-            f.filename
-          )}") format("${fontFormat(f.filename)}"); }`
+          `@font-face { font-family: "${f.name}"; src: url("${this.getFontUrl(f.filename)}") format("${fontFormat(f.filename)}"); }`
       )
       .join("\n");
   }
@@ -179,36 +161,29 @@ export default class CustomFontsPlugin extends Plugin {
   // Code-block rendering
   // -------------------------------------------------------------------------
 
-  registerAliasProcessor(alias: FontAlias) {
-    if (this.registeredAliases.has(alias.id)) return;
-    this.registeredAliases.add(alias.id);
+  registerFontProcessor(blockName: string) {
+    if (this.registeredBlocks.has(blockName)) return;
+    this.registeredBlocks.add(blockName);
 
-    this.registerMarkdownCodeBlockProcessor(
-      alias.id,
-      async (source, el, ctx) => {
-        // Re-read from live settings so edits take effect without reload
-        const current = this.settings.aliases.find((a) => a.id === alias.id);
-        if (!current) {
-          el.createEl("p", {
-            text: `Custom font alias "${alias.id}" was removed. Reload the plugin to deregister this block type.`,
-            cls: "custom-font-error",
-          });
-          return;
-        }
-        const defaults: Record<string, string> = {};
-        if (current.fontName) defaults.family = current.fontName;
-        if (current.size) defaults.size = current.size;
-        if (current.weight) defaults.weight = current.weight;
-        if (current.style) defaults.style = current.style;
-        if (current.color) defaults.color = current.color;
-        if (current.lineHeight) defaults["line-height"] = current.lineHeight;
-        if (current.align) defaults.align = current.align;
-        if (current.letterSpacing)
-          defaults["letter-spacing"] = current.letterSpacing;
-
-        await this.renderBlock(source, el, ctx, defaults);
+    this.registerMarkdownCodeBlockProcessor(blockName, async (source, el, ctx) => {
+      const font = this.settings.fonts.find((f) => f.blockName === blockName);
+      if (!font) {
+        el.createEl("p", {
+          text: `Font block "${blockName}" is no longer registered. Reload the plugin.`,
+          cls: "custom-font-error",
+        });
+        return;
       }
-    );
+      const defaults: Record<string, string> = { family: font.name };
+      if (font.size) defaults.size = font.size;
+      if (font.weight) defaults.weight = font.weight;
+      if (font.style) defaults.style = font.style;
+      if (font.color) defaults.color = font.color;
+      if (font.lineHeight) defaults["line-height"] = font.lineHeight;
+      if (font.align) defaults.align = font.align;
+      if (font.letterSpacing) defaults["letter-spacing"] = font.letterSpacing;
+      await this.renderBlock(source, el, ctx, defaults);
+    });
   }
 
   private async renderBlock(
@@ -218,7 +193,6 @@ export default class CustomFontsPlugin extends Plugin {
     defaults: Record<string, string>
   ) {
     const { config, content } = parseBlock(source);
-    // Per-block config overrides alias/default config
     const merged: Record<string, string> = { ...defaults, ...config };
 
     const wrapper = el.createDiv({ cls: "custom-font-block" });
@@ -233,13 +207,7 @@ export default class CustomFontsPlugin extends Plugin {
 
     const text = content.trim();
     if (text) {
-      await MarkdownRenderer.render(
-        this.app,
-        text,
-        wrapper,
-        ctx.sourcePath,
-        this
-      );
+      await MarkdownRenderer.render(this.app, text, wrapper, ctx.sourcePath, this);
     }
   }
 
@@ -247,8 +215,7 @@ export default class CustomFontsPlugin extends Plugin {
   // Font file management
   // -------------------------------------------------------------------------
 
-  /** Copy an uploaded File into the plugin's fonts/ dir and register it. */
-  async installFont(file: File): Promise<string> {
+  async installFont(file: File): Promise<FontEntry> {
     const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
     if (!["ttf", "otf", "woff", "woff2"].includes(ext)) {
       throw new Error("Unsupported format. Use TTF, OTF, WOFF, or WOFF2.");
@@ -261,45 +228,27 @@ export default class CustomFontsPlugin extends Plugin {
       buf
     );
 
-    // Derive a readable name from the filename
     const raw = filename.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ");
     const name = raw.charAt(0).toUpperCase() + raw.slice(1);
+    const blockName = raw.toLowerCase().replace(/\s+/g, "-");
+
+    const entry: FontEntry = { ...BLANK_FONT, name, filename, blockName };
 
     if (!this.settings.fonts.find((f) => f.filename === filename)) {
-      this.settings.fonts.push({ name, filename });
+      this.settings.fonts.push(entry);
       await this.saveSettings();
     }
-    return name;
+
+    if (blockName) this.registerFontProcessor(blockName);
+    return entry;
   }
 
   async removeFont(filename: string) {
     try {
-      await this.app.vault.adapter.remove(
-        normalizePath(`${this.fontsDir}/${filename}`)
-      );
-    } catch {
-      // already gone — ignore
-    }
-    this.settings.fonts = this.settings.fonts.filter(
-      (f) => f.filename !== filename
-    );
+      await this.app.vault.adapter.remove(normalizePath(`${this.fontsDir}/${filename}`));
+    } catch { /* already gone */ }
+    this.settings.fonts = this.settings.fonts.filter((f) => f.filename !== filename);
     await this.saveSettings();
-  }
-
-  // -------------------------------------------------------------------------
-  // Alias management
-  // -------------------------------------------------------------------------
-
-  async addAlias(alias: FontAlias) {
-    this.settings.aliases.push(alias);
-    await this.saveSettings();
-    this.registerAliasProcessor(alias);
-  }
-
-  async removeAlias(id: string) {
-    this.settings.aliases = this.settings.aliases.filter((a) => a.id !== id);
-    await this.saveSettings();
-    // The processor stays registered until plugin reload, but it shows an error
   }
 
   // -------------------------------------------------------------------------
@@ -308,8 +257,12 @@ export default class CustomFontsPlugin extends Plugin {
 
   async loadSettings() {
     const data = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
-    if (!this.settings.aliases) this.settings.aliases = [];
+    // Migrate: merge any saved font entries with BLANK_FONT defaults for new fields
+    const fonts: FontEntry[] = ((data?.fonts ?? []) as any[]).map((f) => ({
+      ...BLANK_FONT,
+      ...f,
+    }));
+    this.settings = { fonts };
   }
 
   async saveSettings() {
@@ -334,68 +287,119 @@ class CustomFontsSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    this.renderFontsSection(containerEl);
-    this.renderAliasesSection(containerEl);
-    this.renderUsageSection(containerEl);
-  }
+    containerEl.createEl("h2", { text: "Custom Fonts" });
 
-  // ---- Fonts ---------------------------------------------------------------
-
-  private renderFontsSection(root: HTMLElement) {
-    root.createEl("h2", { text: "Installed Fonts" });
-
-    new Setting(root)
-      .setName("Add font file")
-      .setDesc("Upload a TTF, OTF, WOFF, or WOFF2 file. The font will be stored inside the plugin folder.")
-      .addButton((btn) =>
-        btn
-          .setButtonText("Choose file…")
-          .setCta()
-          .onClick(() => this.pickFontFile())
-      );
+    // Font cards
+    for (const font of this.plugin.settings.fonts) {
+      this.renderFontCard(containerEl, font);
+    }
 
     if (this.plugin.settings.fonts.length === 0) {
-      root.createEl("p", {
-        text: "No fonts installed yet.",
+      containerEl.createEl("p", {
+        text: "No fonts yet — click Upload to add one.",
         cls: "setting-item-description",
       });
-      return;
     }
 
-    root.createEl("p", {
-      text: "Edit the name to change the font-family string used in code blocks.",
-      cls: "setting-item-description",
-    });
+    // Upload button
+    new Setting(containerEl).addButton((btn) =>
+      btn.setButtonText("Upload font…").setCta().onClick(() => this.pickFontFile())
+    );
 
-    for (const font of this.plugin.settings.fonts) {
-      const s = new Setting(root)
-        .setName(font.filename)
-        .addText((text) =>
-          text
-            .setValue(font.name)
-            .setPlaceholder("Font family name")
-            .onChange(async (v) => {
-              font.name = v;
-              await this.plugin.saveSettings();
-            })
-        )
-        .addExtraButton((btn) =>
-          btn
-            .setIcon("trash")
-            .setTooltip("Remove font")
-            .onClick(async () => {
-              await this.plugin.removeFont(font.filename);
-              new Notice("Font removed.");
-              this.display();
-            })
-        );
+    // Demo gif (placeholder until user drops in the real recording)
+    const gifPath = (this.plugin.app.vault.adapter as FileSystemAdapter)
+      .getResourcePath(normalizePath(`${this.plugin.manifest.dir}/demo.gif`));
+    const gif = containerEl.createEl("img", { cls: "custom-fonts-demo-gif" });
+    gif.src = gifPath;
+    gif.alt = "Demo";
 
-      // Live preview
-      const preview = s.descEl.createDiv({ cls: "custom-fonts-preview-text" });
-      preview.style.fontFamily = `"${font.name}", sans-serif`;
-      preview.textContent = "The quick brown fox jumps over the lazy dog.";
-    }
+    // Extra info (usage docs) — collapsed
+    const info = containerEl.createEl("details", { cls: "custom-fonts-advanced custom-fonts-advanced--top" });
+    info.createEl("summary", { text: "How to use font blocks", cls: "custom-fonts-advanced-summary" });
+    this.renderUsageDocs(info);
   }
+
+  // ---- Font card -----------------------------------------------------------
+
+  private renderFontCard(root: HTMLElement, font: FontEntry) {
+    const card = root.createDiv({ cls: "custom-fonts-card" });
+
+    // Header: font name + delete button
+    new Setting(card)
+      .setName(font.name)
+      .addExtraButton((btn) =>
+        btn
+          .setIcon("trash")
+          .setTooltip("Remove font")
+          .onClick(async () => {
+            await this.plugin.removeFont(font.filename);
+            new Notice("Font removed.");
+            this.display();
+          })
+      );
+
+    // Block name field
+    new Setting(card)
+      .setName("Block name")
+      .addText((t) =>
+        t
+          .setValue(font.blockName)
+          .setPlaceholder("e.g. tengwar")
+          .onChange(async (v) => {
+            const safe = v.replace(/[^a-zA-Z0-9-]/g, "");
+            font.blockName = safe;
+            await this.plugin.saveSettings();
+            if (safe) this.plugin.registerFontProcessor(safe);
+          })
+      );
+
+    // Preview
+    const preview = card.createDiv({ cls: "custom-fonts-card-preview" });
+    preview.style.fontFamily = `"${font.name}", sans-serif`;
+    preview.textContent = "The quick brown fox jumps over the lazy dog.";
+
+    // Advanced dropdown
+    const adv = card.createEl("details", { cls: "custom-fonts-advanced" });
+    adv.createEl("summary", { text: "Advanced", cls: "custom-fonts-advanced-summary" });
+
+    new Setting(adv)
+      .setName("Rename font")
+      .setDesc("Updates the name used in family: headers")
+      .addText((t) =>
+        t
+          .setValue(font.name)
+          .setPlaceholder("Font name")
+          .onChange(async (v) => {
+            font.name = v;
+            preview.style.fontFamily = `"${v}", sans-serif`;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(adv).setName("Size").addText((t) =>
+      t.setPlaceholder("e.g. 20px").setValue(font.size).onChange(async (v) => { font.size = v; await this.plugin.saveSettings(); })
+    );
+    new Setting(adv).setName("Weight").addText((t) =>
+      t.setPlaceholder("e.g. bold").setValue(font.weight).onChange(async (v) => { font.weight = v; await this.plugin.saveSettings(); })
+    );
+    new Setting(adv).setName("Style").addText((t) =>
+      t.setPlaceholder("e.g. italic").setValue(font.style).onChange(async (v) => { font.style = v; await this.plugin.saveSettings(); })
+    );
+    new Setting(adv).setName("Color").addText((t) =>
+      t.setPlaceholder("e.g. #333").setValue(font.color).onChange(async (v) => { font.color = v; await this.plugin.saveSettings(); })
+    );
+    new Setting(adv).setName("Line height").addText((t) =>
+      t.setPlaceholder("e.g. 1.6").setValue(font.lineHeight).onChange(async (v) => { font.lineHeight = v; await this.plugin.saveSettings(); })
+    );
+    new Setting(adv).setName("Align").addText((t) =>
+      t.setPlaceholder("e.g. center").setValue(font.align).onChange(async (v) => { font.align = v; await this.plugin.saveSettings(); })
+    );
+    new Setting(adv).setName("Letter spacing").addText((t) =>
+      t.setPlaceholder("e.g. 0.05em").setValue(font.letterSpacing).onChange(async (v) => { font.letterSpacing = v; await this.plugin.saveSettings(); })
+    );
+  }
+
+  // ---- Upload --------------------------------------------------------------
 
   private pickFontFile() {
     const input = document.createElement("input");
@@ -405,183 +409,35 @@ class CustomFontsSettingTab extends PluginSettingTab {
       const file = input.files?.[0];
       if (!file) return;
       try {
-        const name = await this.plugin.installFont(file);
-        new Notice(`Font "${name}" installed. Use family: ${name} in font blocks.`);
+        const entry = await this.plugin.installFont(file);
+        new Notice(`"${entry.name}" installed. Block name: ${entry.blockName}`);
         this.display();
       } catch (e: any) {
-        new Notice(`Error installing font: ${e.message}`);
+        new Notice(`Error: ${e.message}`);
       }
     });
     input.click();
   }
 
-  // ---- Aliases -------------------------------------------------------------
-
-  private renderAliasesSection(root: HTMLElement) {
-    root.createEl("h2", { text: "Named Block Aliases" });
-    root.createEl("p", {
-      text: 'Aliases let you write ```alias-name blocks that automatically apply a specific font and style — no config header needed.',
-      cls: "setting-item-description",
-    });
-
-    for (const alias of this.plugin.settings.aliases) {
-      const desc = [
-        `font: ${alias.fontName}`,
-        alias.size && `size: ${alias.size}`,
-        alias.weight && `weight: ${alias.weight}`,
-        alias.color && `color: ${alias.color}`,
-      ]
-        .filter(Boolean)
-        .join(", ");
-
-      new Setting(root)
-        .setName(`\`\`\`${alias.id}`)
-        .setDesc(desc)
-        .addExtraButton((btn) =>
-          btn
-            .setIcon("trash")
-            .setTooltip("Remove alias")
-            .onClick(async () => {
-              await this.plugin.removeAlias(alias.id);
-              new Notice(
-                `Alias "${alias.id}" removed. Reload the plugin to fully deregister the block type.`
-              );
-              this.display();
-            })
-        );
-    }
-
-    // New alias form
-    root.createEl("p", {
-      cls: "custom-fonts-section-heading",
-      text: "Create alias",
-    });
-
-    let id = "";
-    let fontName = this.plugin.settings.fonts[0]?.name ?? "";
-    let size = "";
-    let weight = "";
-    let style = "";
-    let color = "";
-    let lineHeight = "";
-    let align = "";
-    let letterSpacing = "";
-
-    new Setting(root)
-      .setName("Block name")
-      .setDesc("Letters, numbers, and hyphens only — e.g. handwriting, typewriter")
-      .addText((t) => t.setPlaceholder("handwriting").onChange((v) => { id = v; }));
-
-    new Setting(root)
-      .setName("Font family")
-      .setDesc("Must match the name of an installed font above")
-      .addText((t) =>
-        t.setValue(fontName).setPlaceholder("Font name").onChange((v) => { fontName = v; })
-      );
-
-    new Setting(root).setName("Size").addText((t) =>
-      t.setPlaceholder("e.g. 20px").onChange((v) => { size = v; })
-    );
-
-    new Setting(root).setName("Weight").addText((t) =>
-      t.setPlaceholder("e.g. bold or 700").onChange((v) => { weight = v; })
-    );
-
-    new Setting(root).setName("Style").addText((t) =>
-      t.setPlaceholder("e.g. italic").onChange((v) => { style = v; })
-    );
-
-    new Setting(root).setName("Color").addText((t) =>
-      t.setPlaceholder("e.g. #333 or rebeccapurple").onChange((v) => { color = v; })
-    );
-
-    new Setting(root).setName("Line height").addText((t) =>
-      t.setPlaceholder("e.g. 1.6").onChange((v) => { lineHeight = v; })
-    );
-
-    new Setting(root).setName("Text align").addText((t) =>
-      t.setPlaceholder("e.g. center").onChange((v) => { align = v; })
-    );
-
-    new Setting(root).setName("Letter spacing").addText((t) =>
-      t.setPlaceholder("e.g. 0.05em").onChange((v) => { letterSpacing = v; })
-    );
-
-    new Setting(root).addButton((btn) =>
-      btn
-        .setButtonText("Create alias")
-        .setCta()
-        .onClick(async () => {
-          const safeId = id.trim().replace(/[^a-zA-Z0-9-]/g, "");
-          if (!safeId) {
-            new Notice("Enter a block name.");
-            return;
-          }
-          if (!fontName.trim()) {
-            new Notice("Enter a font name.");
-            return;
-          }
-          if (
-            safeId === "font" ||
-            this.plugin.settings.aliases.find((a) => a.id === safeId)
-          ) {
-            new Notice(`"${safeId}" is already taken.`);
-            return;
-          }
-          await this.plugin.addAlias({
-            id: safeId,
-            fontName: fontName.trim(),
-            size,
-            weight,
-            style,
-            color,
-            lineHeight,
-            align,
-            letterSpacing,
-          });
-          new Notice(`Alias "${safeId}" created.`);
-          this.display();
-        })
-    );
-  }
-
   // ---- Usage docs ----------------------------------------------------------
 
-  private renderUsageSection(root: HTMLElement) {
-    root.createEl("h2", { text: "Usage" });
+  private renderUsageDocs(root: HTMLElement) {
+    root.createEl("p", { text: "Named block (no header needed):" });
+    root.createEl("pre").createEl("code", {
+      text: "```tengwar\nYour text here.\n```",
+    });
+
+    root.createEl("p", { text: "Generic block with explicit font:" });
+    root.createEl("pre").createEl("code", {
+      text: "```font\nfamily: Tengwar\n\nYour text here.\n```",
+    });
 
     root.createEl("p", {
-      text: "Use a font block anywhere in your notes. The header (key: value pairs) is optional — leave it out if the block has no config.",
+      text: "You can override any advanced style on a per-block basis by adding header lines:",
+      cls: "setting-item-description",
     });
-
     root.createEl("pre").createEl("code", {
-      text: "```font\nfamily: My Font Name\nsize: 22px\nweight: bold\ncolor: #2d5a8e\n\nYour text here.\nMarkdown **bold** and _italic_ also work.\n```",
+      text: "```tengwar\nsize: 24px\ncolor: #5a3e8a\n\nOverridden style for this block only.\n```",
     });
-
-    root.createEl("p", { text: "Supported header properties:" });
-    const ul = root.createEl("ul");
-    [
-      "family — CSS font-family (required unless using an alias)",
-      "size — e.g. 18px, 1.4em",
-      "weight — e.g. bold, 700",
-      "style — e.g. italic",
-      "color — any CSS color",
-      "line-height — e.g. 1.6",
-      "align — e.g. center, right",
-      "letter-spacing — e.g. 0.05em",
-    ].forEach((line) => ul.createEl("li", { text: line }));
-
-    if (this.plugin.settings.aliases.length > 0) {
-      root.createEl("p", {
-        text: "With a named alias you can skip the header entirely:",
-      });
-      root.createEl("pre").createEl("code", {
-        text: `\`\`\`${this.plugin.settings.aliases[0].id}\nYour text here — font and style are preset.\n\`\`\``,
-      });
-      root.createEl("p", {
-        text: "You can still add header lines to override individual alias properties on a per-block basis.",
-        cls: "setting-item-description",
-      });
-    }
   }
 }

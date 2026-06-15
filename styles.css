@@ -1,3 +1,5 @@
+/* ---- Note rendering ---- */
+
 .custom-font-block {
   padding: 0;
   background: none;
@@ -5,7 +7,6 @@
   margin: 0;
 }
 
-/* Strip paragraph margins so multi-line text flows naturally */
 .custom-font-block > p {
   margin-block-start: 0;
   margin-block-end: 0.4em;
@@ -15,7 +16,6 @@
   margin-block-end: 0;
 }
 
-/* Keep inline formatting (bold, italic, links) within the custom font */
 .custom-font-block strong,
 .custom-font-block em,
 .custom-font-block a {
@@ -28,19 +28,83 @@
   font-size: 0.9em;
 }
 
-/* Settings tab helpers */
-.custom-fonts-preview-text {
-  font-size: 1.4em;
-  padding: 4px 0;
-  color: var(--text-normal);
+/* ---- Settings: font card ---- */
+
+.custom-fonts-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 2px 16px 8px;
+  margin-bottom: 12px;
 }
 
-.custom-fonts-section-heading {
-  margin-top: 1.5em;
-  margin-bottom: 0.25em;
-  font-size: 1em;
-  font-weight: 600;
+.custom-fonts-card > .setting-item {
+  border-top: none;
+}
+
+.custom-fonts-card > .setting-item + .setting-item {
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.custom-fonts-card-preview {
+  font-size: 1.35em;
+  padding: 10px 0;
+  color: var(--text-normal);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+/* ---- Settings: demo gif ---- */
+
+.custom-fonts-demo-gif {
+  display: block;
+  max-width: 100%;
+  border-radius: var(--radius-m);
+  margin: 16px 0 8px;
+}
+
+/* ---- Advanced collapsible ---- */
+
+.custom-fonts-advanced {
+  margin: 6px 0 2px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 0 0.75em;
+}
+
+.custom-fonts-advanced--top {
+  margin-top: 16px;
+}
+
+.custom-fonts-advanced[open] {
+  padding-bottom: 4px;
+}
+
+.custom-fonts-advanced-summary {
+  padding: 0.45em 0;
+  cursor: pointer;
+  font-size: 0.85em;
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  user-select: none;
+  list-style: none;
+}
+
+.custom-fonts-advanced-summary::-webkit-details-marker {
+  display: none;
+}
+
+.custom-fonts-advanced-summary::before {
+  content: "▸ ";
+  font-size: 0.75em;
+}
+
+.custom-fonts-advanced[open] > .custom-fonts-advanced-summary::before {
+  content: "▾ ";
+}
+
+.custom-fonts-advanced .setting-item {
+  border-top: none;
+  padding: 0.3em 0;
+}
+
+.custom-fonts-advanced .setting-item + .setting-item {
+  border-top: 1px solid var(--background-modifier-border);
 }
